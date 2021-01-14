@@ -212,11 +212,13 @@ function mousePressed() {
             }
         });
     }
+    // Переключатель котлов
     if (isInRect(rMousePos, upperButtonBounds)) {
-        console.log("In upper!");
+        sendData("switchCauldron");
     }
+    // Переключатель режима (ручной/авто)
     if (isInRect(rMousePos, lowerButtonBounds)) {
-        console.log("In lower!");
+        sendData("switchCauldronMode");
     }
 
     if (isInRect(rMousePos, displayBounds)) {

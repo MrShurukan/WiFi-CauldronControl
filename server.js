@@ -172,9 +172,15 @@ ws_server.on("connection", function connection(ws) {
                 else if (message == "resetBoard") {
                     sendToESP(message);
                 }
+                else if (message == "switchCauldron") {
+                    sendToESP("switchCauldron");
+                }
+                else if (message == "switchCauldronMode") {
+                    sendToESP("switchCauldronMode");
+                }
                 // Ручное управление ESP
                 else if (message.startsWith("send")) {
-                    ESP_client.send(message);
+                    if (ESP_client) ESP_client.send(message);
                 }
             }
         }
