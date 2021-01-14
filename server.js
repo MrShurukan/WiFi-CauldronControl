@@ -25,6 +25,7 @@ const ws_server = new WebSocket.Server({server});
 
 // Прописывание логики для WebSockets
 let ESP_client = null;
+let ESP_status = "disconnected";
 let clients = [];
 
 const CauldronData = {
@@ -39,16 +40,26 @@ const CauldronData = {
     },
     chosenCauldron: null,
     chosenMode:     null,
-    hyst:           null
+    hyst:           null,
+    activeHeat:     null,
+    cSystemState:   null
 };
 
+// ID таймера, который отслеживает, если ESP отключилась
+let timeoutID = null;
 function sendToESP(message, ws) {
     console.log(`Отправляю на ESP: ${message}`);
     if (ESP_client == null) {
         return false;
     }
 
-    ESP_client.ping(function noop() {});
+    //ESP_client.ping(function noop() {});
+    if (timeoutID == null) {
+        timeoutID = setTimeout(() => {
+            console.log("Timeout!");
+            if (ESP_client) disconnectESP(ESP_client);
+        }, 5000);
+    }
 
     ESP_client.send(message);
     return true;
@@ -56,6 +67,14 @@ function sendToESP(message, ws) {
 
 function sendJSON(ws, object) {
     ws.send(JSON.stringify(object));
+}
+
+function sendEspStatusToAllClients() {
+    clients.forEach(client => sendJSON(client, {eventName: "ESP_status", data: ESP_status}));
+}
+
+function disconnectESP(ws) {
+    ws._events.close[1]();
 }
 
 ws_server.on("connection", function connection(ws) {
@@ -67,36 +86,49 @@ ws_server.on("connection", function connection(ws) {
         // TODO: Починить проблему с отсоединением у ESP
         // Потому что это какая-то дичь
         if (ESP_client == ws && message == "disconnect") {
-            ws._events.close[1]();
+            disconnectESP(ws);
         }
 
         // Клиент помечает себя как ESP
         if (message == "ESP") {
             console.log("ESP вышел в сеть");
             ESP_client = ws;
+            ESP_status = "connected";
             
-            clients.forEach(client => sendJSON(client, {eventName: "ESP_status", data: "connected"}));
+            sendEspStatusToAllClients();
         }
         // Клиент помечает себя как обычный клиент
         else if (message == "client") {
             // Добавляем клиента в список клиентов
             clients.push(ws);
             // Оповещаем его о статусе ESP
-            sendJSON(ws, {eventName: "ESP_status", data: ESP_client != null ? "connected" : "disconnected"});
+            sendJSON(ws, {eventName: "ESP_status", data: ESP_status});
         }
         // Обработка сообщений от ESP и клиента
         else {
             // Обработка сообщений от ESP
             if (ws == ESP_client) {
-                if (message.startsWith("systemData`")) {
+                // Очищаем timeout по которому устройство считается отключенным
+                clearTimeout(timeoutID);
+                timeoutID = null;
+
+                // Системные данные
+                if (message.startsWith("`")) {
+                    if (ESP_status == "mainDeviceDoesntRespond") {
+                        ESP_status = "connected";
+                        sendEspStatusToAllClients();
+                    }
+                    ESP_status = "connected";
+
                     // Срезаем заголовок
-                    message = message.substr("systemData`".length);
+                    // (до этого заголовок был другим, оставляем для возможного редактирования)
+                    message = message.substr("`".length); 
 
                     // Разбиваем значения, разделенные запятыми, в массив
                     const values = message.split(",");
                     // Проверка на валидность
                     // Если размер не 10 - данные повредились и мы их игнорируем
-                    if (values.length != 10) {
+                    if (values.length != 12) {
                         // Запрашиваем отправку ещё раз
                         ESP_client.send("requestData");
                         return;
@@ -114,9 +146,15 @@ ws_server.on("connection", function connection(ws) {
                     CauldronData.chosenCauldron      = values[7];
                     CauldronData.chosenMode          = values[8];
                     CauldronData.hyst                = values[9];
+                    CauldronData.activeHeat          = values[10];
+                    CauldronData.cSystemState        = values[11];
 
                     // Отправляем клиентам
                     clients.forEach(client => sendJSON(client, {eventName: "requested_data", ok: true, data: CauldronData}));
+                }
+                else if (message == "mainDeviceDoesntRespond") {
+                    ESP_status = "mainDeviceDoesntRespond";
+                    sendEspStatusToAllClients();
                 }
             }
             // Обработка сообщений от клиента
@@ -146,8 +184,9 @@ ws_server.on("connection", function connection(ws) {
         if (ESP_client == ws) {
             console.log("ESP отключен!");
             ESP_client = null;
+            ESP_status = "disconnected";
 
-            clients.forEach(client => sendJSON(client, {eventName: "ESP_status", data: "disconnected"}));
+            sendEspStatusToAllClients();
         }
         else {
             console.log("Клиент был отключен");

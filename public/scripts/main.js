@@ -2,7 +2,8 @@ let deviceImage,
     resetImages = {regular: null, shadowed: null}, 
     upperBtnImages = {regular: null, shadowed: null},
     lowerBtnImages = {regular: null, shadowed: null},
-    checkIcon,
+    checkIcon, gasIcon, electroIcon, redheatIcon, greenheatIcon, 
+    activeIcon, autoIcon, manualIcon, warningIcon,
     monospaceFont;
 
 let scalingFactor, translateX, translateY;
@@ -44,6 +45,14 @@ function preload() {
     lowerBtnImages.shadowed = loadImage("images/CC_Device_lower_button_fullsize_shadow.png");
     
     checkIcon = loadImage("images/checkIcon.png");
+    gasIcon = loadImage("images/gasIcon.png");
+    electroIcon = loadImage("images/electroIcon.png");
+    redheatIcon = loadImage("images/redCoil.png");
+    greenheatIcon = loadImage("images/greenCoil.png");
+    activeIcon = loadImage("images/gearIcon.png");
+    autoIcon = loadImage("images/autoIcon.png");
+    manualIcon = loadImage("images/manualIcon.png");
+    warningIcon = loadImage("images/warningIcon.png");
     monospaceFont = loadFont('fonts/AnonymousPro-Regular.ttf');
 }
 
@@ -60,7 +69,9 @@ const CauldronData = {
     },
     chosenCauldron: null,
     chosenMode:     null,
-    hyst:           null
+    hyst:           null,
+    activeHeat:     null,
+    cSystemState:   null
 };
 
 // Состояние ESP
@@ -83,6 +94,8 @@ function assignCauldronData(newData) {
     CauldronData.chosenCauldron = newData.chosenCauldron;
     CauldronData.chosenMode = newData.chosenMode;
     CauldronData.hyst = newData.hyst;
+    CauldronData.activeHeat = newData.activeHeat;
+    CauldronData.cSystemState = newData.cSystemState;
 }
 
 // ID интервала, который будет опрашивать сервер о новых данных
@@ -116,13 +129,16 @@ function receiveMessage(eventName, message) {
                     espStatus = message.data;
                     
                     sendData("requestData");
-                    request_interval_id = setInterval(() => sendData("requestData"), 5000);
+                    if (!request_interval_id) request_interval_id = setInterval(() => sendData("requestData"), 5000);
                     break;
                 case "disconnected":
                     espStatus = message.data;
 
                     clearInterval(request_interval_id);
                     request_interval_id = null;
+                    break;
+                case "mainDeviceDoesntRespond":
+                    espStatus = message.data;
                     break;
                 default:
                     console.log(`Неизвестное состояние ESP: ${message.data}`);
@@ -250,7 +266,9 @@ function displayTextCenter(string, size, col) {
     text(string, (dPos[0].x + dPos[1].x) / 2, (dPos[0].y + dPos[1].y) / 2, width, height); // string.length * textSize(), textSize() * lineAmount * 2);
 }
 
-function displayTextLeft(string, size, col) {
+// Выводит сообщение ~ на центр экрана, но с выравниваем по левой стороне
+// Да-да, костыли и плохая практика, знаю :)
+function displayTextLeftAlign(string, size, col) {
     const db0 = displayBounds[0], db1 = displayBounds[1];
     const dPos = [getScreenCoordinates(db0.x, db0.y), getScreenCoordinates(db1.x, db1.y)];
     // Считаем количество строчек в тексте
@@ -268,8 +286,18 @@ function displayTextLeft(string, size, col) {
 }
 
 // Рисует основной интерфейс программы
+// dPos - позиция маленького экранчика на экране в пикселях
 let dotsAtTheEnd = ".";
-function drawMainLayout() {
+function drawMainLayout(dPos) {
+    // Рисуем галочку в левом нижнем углу устройства
+    // Эти офсеты подобраны на глаз, точность тут не важна
+    const iconSize = scaleF(85); 
+
+    if (espStatus == "mainDeviceDoesntRespond")
+        image(warningIcon, dPos[0].x + scaleF(15), dPos[1].y - scaleF(100), iconSize, iconSize);
+    else
+        image(checkIcon, dPos[0].x + scaleF(15), dPos[1].y - scaleF(100), iconSize, iconSize);
+
     // Если поля выставлены в null, то нужно написать, что идёт загрузка
     if (CauldronData.chosenCauldron == null) {
         // Анимируем точки в конце
@@ -289,7 +317,43 @@ function drawMainLayout() {
         str += `Улица       =  ${t.UL}\n`;
         str += `Дом         =  ${t.DOM} из ${t.SETDOM}\n`;
 
-        displayTextLeft(str, 60, color(0, 0, 0));
+        displayTextLeftAlign(str, 60, color(0, 0, 0));
+
+        /* Остальные системные иконки (рисуем справа) */
+        let rightOffset = scaleF(30) + iconSize;
+        const bottomOffset = scaleF(100);
+        // На сколько отдалена каждая из иконок от края справа
+        const rightOffsetIncrease = rightOffset;
+        
+        // 1) Иконка heat-а
+        switch (CauldronData.activeHeat) {
+            case "red":
+                image(redheatIcon, dPos[1].x - rightOffset, dPos[1].y - bottomOffset, iconSize, iconSize);
+                break;
+            case "green":
+                image(greenheatIcon, dPos[1].x - rightOffset, dPos[1].y - bottomOffset, iconSize, iconSize);
+                break;
+        }
+        if (CauldronData.activeHeat != "off") rightOffset += rightOffsetIncrease;
+
+        // 2) Иконка того, что система активна
+        if (CauldronData.cSystemState == "act") {
+            image(activeIcon, dPos[1].x - rightOffset, dPos[1].y - bottomOffset, iconSize, iconSize);
+            rightOffset += rightOffsetIncrease
+        }
+
+        // 3) Иконка того, какой режим выставлен
+        if (CauldronData.chosenMode == "auto")
+            image(autoIcon, dPos[1].x - rightOffset, dPos[1].y - bottomOffset, iconSize, iconSize);
+        else
+            image(manualIcon, dPos[1].x - rightOffset, dPos[1].y - bottomOffset, iconSize, iconSize);
+        rightOffset += rightOffsetIncrease;
+
+        // 4) Иконка того, какой котёл активен
+        if (CauldronData.chosenCauldron == "gas")
+            image(gasIcon, dPos[1].x - rightOffset, dPos[1].y - bottomOffset, iconSize, iconSize);
+        else 
+            image(electroIcon, dPos[1].x - rightOffset, dPos[1].y - bottomOffset, iconSize, iconSize);
     }
 }
 
@@ -310,13 +374,8 @@ function drawDisplay() {
         if (espStatus == "disconnected") {
             displayTextCenter("ESP устройство сейчас офлайн", 70, color(250, 250, 0));
         }
-        else if (espStatus == "connected") {
-            // Рисуем галочку в левом нижнем углу устройства
-            // Эти офсеты подобраны на глаз, точность тут не важна
-            const checkSize = scaleF(85); 
-            image(checkIcon, dPos[0].x + scaleF(15), dPos[1].y - scaleF(100), checkSize, checkSize);
-
-            drawMainLayout();
+        else if (espStatus == "connected" || espStatus == "mainDeviceDoesntRespond") {
+            drawMainLayout(dPos);
         }
         /*else if (espStatus == "bugged") {
 
